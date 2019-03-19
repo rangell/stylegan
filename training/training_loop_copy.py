@@ -21,6 +21,7 @@ from training import misc
 from metrics import metric_base
 from IPython import embed
 import pickle
+from PIL import Image
 
 
 #----------------------------------------------------------------------------
@@ -59,7 +60,8 @@ def training_schedule(
     cur_nimg,
     training_set,
     num_gpus,
-    lod_initial_resolution  = 4,        # Image resolution used at the beginning.
+    #lod_initial_resolution  = 4,        # Image resolution used at the beginning.
+    lod_initial_resolution  = 1024,        # Image resolution used at the beginning.
     lod_training_kimg       = 600,      # Thousands of real images to show before doubling the resolution.
     lod_transition_kimg     = 600,      # Thousands of real images to show when fading in new layers.
     minibatch_base          = 16,       # Maximum minibatch size, divided evenly among GPUs.
@@ -173,8 +175,6 @@ def training_loop(
             E = tflib.Network('E', num_channels=training_set.shape[0], resolution=training_set.shape[1], label_size=training_set.label_size, **E_args)
 
 
-            #exit()
-
             Gs = G.clone('Gs')
     G.print_layers(); D.print_layers()
 
@@ -204,6 +204,7 @@ def training_loop(
 
             lod_assign_ops = [tf.assign(E_gpu.find_var('lod'), lod_in)]
             reals, labels = training_set.get_minibatch_tf()
+
             reals = process_reals(reals, lod_in, mirror_augment, training_set.dynamic_range, drange_net)
             #with tf.name_scope('G_loss'), tf.control_dependencies(lod_assign_ops):
                 #G_loss = dnnlib.util.call_func_by_name(G=G_gpu, D=D_gpu, opt=G_opt, training_set=training_set, minibatch_size=minibatch_split, **G_loss_args)
@@ -267,10 +268,60 @@ def training_loop(
 
             tflib.run([E_train_op], {lod_in: sched.lod, lrate_in: sched.D_lrate, minibatch_in: sched.minibatch})
 
-            reals, labels = tflib.run([reals, labels], {lod_in: sched.lod, lrate_in: sched.D_lrate, minibatch_in: sched.minibatch})
+            # reals is shape 4, 3, 1024, 1024
+            #reals, labels = tflib.run([reals, labels], {lod_in: sched.lod, lrate_in: sched.D_lrate, minibatch_in: sched.minibatch})
             
+            #embed()
+            #exit()
+
+            pkl_file = '/mnt/nfs/scratch1/sbrockman/results/00073-sgan-images1024x1024-4gpu/network-snapshot-009562.pkl'
+            G_snap, D_snap, Gs_snap, E_snap = misc.load_pkl(pkl_file)
+
+            
+            mu, log_var = E_snap.get_output_for(reals, labels, is_training=False)
+            eps = tf.random.normal(tf.shape(mu), 0, 1, dtype=tf.float32)
+            z = tf.add(mu, tf.multiply(tf.sqrt(tf.exp(log_var)), eps))
+
+            fake_images = Gs_pre.get_output_for(z, labels, is_training=False)
+            recon_loss = tf.losses.mean_squared_error(reals, fake_images)
+
+            KL = -0.5 * tf.reduce_sum(1+log_var - tf.square(mu) - tf.exp(log_var))
+            cost = tf.reduce_mean(recon_loss + KL)
+
+
+            #cost = tflib.run([cost], {lod_in: sched.lod, lrate_in: sched.D_lrate, minibatch_in: sched.minibatch})
+
+            #recon_loss = tflib.run([recon_loss], {lod_in: sched.lod, lrate_in: sched.D_lrate, minibatch_in: sched.minibatch})
+            #KL = tflib.run([KL], {lod_in: sched.lod, lrate_in: sched.D_lrate, minibatch_in: sched.minibatch})
+
+            
+            # the line below returns shape 1, 4, 3, 1024, 1024 when put single arg in []
+            reals_array = tflib.run(reals, {lod_in: sched.lod, lrate_in: sched.D_lrate, minibatch_in: sched.minibatch})
+            fakes_array = tflib.run(fake_images, {lod_in: sched.lod, lrate_in: sched.D_lrate, minibatch_in: sched.minibatch})
+
+  
             embed()
-            exit()
+            #if cur_nimg % 1000 == 0:
+                #print(recon_loss, KL, cost)
+
+
+            
+            #real = Image.open('/mnt/nfs/scratch1/sbrockman/data/00009.png')
+            #real = np.array(real)
+
+            #z = E_snap.run(real, np.zeros(1))
+          
+
+            
+            #dataset.parse_tfrecord_np(reals_array[0][0])
+            #print(type(reals_array[0][0]))
+
+            embed()
+
+
+
+
+
 
             cur_nimg += sched.minibatch
 

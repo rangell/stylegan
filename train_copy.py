@@ -22,7 +22,7 @@ if 1:
     print('made it to train.py')
 
     desc          = 'sgan'                                                                 # Description string included in result subdir name.
-    train         = EasyDict(run_func_name='training.training_loop.training_loop')         # Options for training loop.
+    train         = EasyDict(run_func_name='training.training_loop_copy.training_loop')         # Options for training loop.
     G             = EasyDict(func_name='training.networks_stylegan.G_style')               # Options for generator network.
     D             = EasyDict(func_name='training.networks_stylegan.D_basic')               # Options for discriminator network.
     E             = EasyDict(func_name='training.networks_stylegan.E_basic')               # Options for encoder network.
@@ -61,7 +61,8 @@ if 1:
 
     # Default options.
     train.total_kimg = 25000
-    sched.lod_initial_resolution = 8
+    #sched.lod_initial_resolution = 8
+    sched.lod_initial_resolution = 1024
     sched.G_lrate_dict = {128: 0.0015, 256: 0.002, 512: 0.003, 1024: 0.003}
     sched.D_lrate_dict = EasyDict(sched.G_lrate_dict)
 

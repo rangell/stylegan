@@ -11,6 +11,14 @@ import tensorflow as tf
 import dnnlib.tflib as tflib
 from dnnlib.tflib.autosummary import autosummary
 
+import os
+import pickle
+import numpy as np
+import PIL.Image
+import dnnlib
+import config
+from IPython import embed
+
 #----------------------------------------------------------------------------
 # Convenience func that casts all of its arguments to tf.float32.
 
@@ -46,6 +54,43 @@ def D_wgan(G, D, opt, training_set, minibatch_size, reals, labels, # pylint: dis
         epsilon_penalty = autosummary('Loss/epsilon_penalty', tf.square(real_scores_out))
     loss += epsilon_penalty * wgan_epsilon
     return loss
+
+
+# Loss function for our encoder 
+def E_wgan(E, Gs_pre, opt, training_set, minibatch_size, reals, labels,
+    wgan_epsilon = 0.001): # Weight for the epsilon term, \epsilon_{drift}.
+
+    #Gs_pre.print_layers()
+
+
+    mu, log_var = E.get_output_for(reals, labels, is_training=True)
+    
+    #z = tf.random.normal(shape=tf.shape(mu), mean=mu, stddev=log_var)
+    # draw z like the code for VAE (reparameterization trick)
+    
+
+    eps = tf.random.normal(tf.shape(mu), 0, 1, dtype=tf.float32)
+    z = tf.add(mu, tf.multiply(tf.sqrt(tf.exp(log_var)), eps))
+
+
+    # Generate the image
+    fmt = dict(func=tflib.convert_images_to_uint8, nchw_to_nhwc=True)
+    fake_images = Gs_pre.get_output_for(z, labels, is_training=False)
+
+
+    recon_loss = tf.losses.mean_squared_error(reals, fake_images)
+    KL = -0.5 * tf.reduce_sum(1+log_var - tf.square(mu) - tf.exp(log_var))
+    cost = tf.reduce_mean(recon_loss + KL)
+
+   # print('reached embed in E_loss')
+   # embed()
+
+
+    return cost
+
+
+
+
 
 def D_wgan_gp(G, D, opt, training_set, minibatch_size, reals, labels, # pylint: disable=unused-argument
     wgan_lambda     = 10.0,     # Weight for the gradient penalty term.

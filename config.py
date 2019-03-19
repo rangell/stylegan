@@ -10,9 +10,14 @@
 #----------------------------------------------------------------------------
 # Paths.
 
-result_dir = 'results'
-data_dir = 'datasets'
-cache_dir = 'cache'
-run_dir_ignore = ['results', 'datasets', 'cache']
+result_dir = '/mnt/nfs/scratch1/sbrockman/results/'
+data_dir = '/mnt/nfs/scratch1/sbrockman/datasets/'
+
+#data_dir = 'datasets'
+
+cache_dir = '/mnt/nfs/scratch1/sbrockman/cache/'
+run_dir_ignore = ['/mnt/nfs/scratch1/sbrockman/results/'
+, '/mnt/nfs/scratch1/sbrockman/datasets/'
+, '/mnt/nfs/scratch1/sbrockman/cache/']
 
 #----------------------------------------------------------------------------
