@@ -18,6 +18,7 @@ import PIL.Image
 import dnnlib
 import config
 from IPython import embed
+tfd = tf.contrib.distributions
 
 #----------------------------------------------------------------------------
 # Convenience func that casts all of its arguments to tf.float32.
@@ -60,33 +61,41 @@ def D_wgan(G, D, opt, training_set, minibatch_size, reals, labels, # pylint: dis
 def E_wgan(E, Gs_pre, opt, training_set, minibatch_size, reals, labels,
     wgan_epsilon = 0.001): # Weight for the epsilon term, \epsilon_{drift}.
 
-    #Gs_pre.print_layers()
 
-
+    # Get mu and log_var from the encoder
     mu, log_var = E.get_output_for(reals, labels, is_training=True)
     
-    #z = tf.random.normal(shape=tf.shape(mu), mean=mu, stddev=log_var)
-    # draw z like the code for VAE (reparameterization trick)
-    
+    # Get the latent z 
+    eps = tf.random_normal(tf.shape(mu), 0, 1, dtype=tf.float32)
+    #z = tf.add(mu, tf.multiply(tf.sqrt(tf.exp(log_var)), eps))
+    z = mu + tf.sqrt(tf.exp(log_var)) * eps
 
-    eps = tf.random.normal(tf.shape(mu), 0, 1, dtype=tf.float32)
-    z = tf.add(mu, tf.multiply(tf.sqrt(tf.exp(log_var)), eps))
+    # Generate the images
+    fake_images = Gs_pre.get_output_for(z, labels, is_training=True)
 
 
-    # Generate the image
-    fmt = dict(func=tflib.convert_images_to_uint8, nchw_to_nhwc=True)
-    fake_images = Gs_pre.get_output_for(z, labels, is_training=False)
+    #epsilon = 1e-10
+    #recon_loss = -tf.reduce_sum(
+        #reals * tf.log(epsilon + fake_images) + 
+        #(1-reals) * tf.log(epsilon+1-fake_images), axis=1)
+    #recon_loss = tf.reduce_mean(recon_loss)
 
 
     recon_loss = tf.losses.mean_squared_error(reals, fake_images)
-    KL = -0.5 * tf.reduce_sum(1+log_var - tf.square(mu) - tf.exp(log_var))
-    cost = tf.reduce_mean(recon_loss + KL)
+    KL = -0.5 * tf.reduce_sum(1+log_var - tf.square(mu) - tf.exp(log_var), axis=1)
+    KL = tf.reduce_mean(KL)
 
-   # print('reached embed in E_loss')
-   # embed()
 
+    cost = recon_loss + KL
+
+    #embed()
 
     return cost
+
+
+
+
+
 
 
 

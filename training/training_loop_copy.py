@@ -73,6 +73,7 @@ def training_schedule(
     D_lrate_dict            = {},       # Resolution-specific overrides.
     lrate_rampup_kimg       = 0,        # Duration of learning rate ramp-up.
     tick_kimg_base          = 160,      # Default interval of progress snapshots.
+    #tick_kimg_base          = 160, 
     tick_kimg_dict          = {4: 160, 8:140, 16:120, 32:100, 64:80, 128:60, 256:40, 512:30, 1024:20}): # Resolution-specific overrides.
 
     # Initialize result dict.
@@ -108,7 +109,9 @@ def training_schedule(
         s.D_lrate *= rampup
 
     # Other parameters.
+    #s.tick_kimg = tick_kimg_dict.get(s.resolution, tick_kimg_base)
     s.tick_kimg = tick_kimg_dict.get(s.resolution, tick_kimg_base)
+
     return s
 
 #----------------------------------------------------------------------------
@@ -176,7 +179,7 @@ def training_loop(
 
 
             Gs = G.clone('Gs')
-    G.print_layers(); D.print_layers()
+    E.print_layers()
 
 
     # Load the pretrained network:  karras2019stylegan-ffhq-1024x1024.pkl
@@ -266,7 +269,7 @@ def training_loop(
         # Run training ops.
         for _mb_repeat in range(minibatch_repeats):
 
-            tflib.run([E_train_op], {lod_in: sched.lod, lrate_in: sched.D_lrate, minibatch_in: sched.minibatch})
+            #tflib.run([E_train_op], {lod_in: sched.lod, lrate_in: sched.D_lrate, minibatch_in: sched.minibatch})
 
             # reals is shape 4, 3, 1024, 1024
             #reals, labels = tflib.run([reals, labels], {lod_in: sched.lod, lrate_in: sched.D_lrate, minibatch_in: sched.minibatch})
@@ -274,7 +277,7 @@ def training_loop(
             #embed()
             #exit()
 
-            pkl_file = '/mnt/nfs/scratch1/sbrockman/results/00073-sgan-images1024x1024-4gpu/network-snapshot-009562.pkl'
+            pkl_file = '/mnt/nfs/scratch1/sbrockman/results/00072-sgan-images1024x1024-4gpu/network-snapshot-006122.pkl'
             G_snap, D_snap, Gs_snap, E_snap = misc.load_pkl(pkl_file)
 
             
@@ -282,45 +285,32 @@ def training_loop(
             eps = tf.random.normal(tf.shape(mu), 0, 1, dtype=tf.float32)
             z = tf.add(mu, tf.multiply(tf.sqrt(tf.exp(log_var)), eps))
 
-            fake_images = Gs_pre.get_output_for(z, labels, is_training=False)
+            fake_images = Gs_snap.get_output_for(mu, labels, is_training=False)
             recon_loss = tf.losses.mean_squared_error(reals, fake_images)
 
             KL = -0.5 * tf.reduce_sum(1+log_var - tf.square(mu) - tf.exp(log_var))
             cost = tf.reduce_mean(recon_loss + KL)
 
 
-            #cost = tflib.run([cost], {lod_in: sched.lod, lrate_in: sched.D_lrate, minibatch_in: sched.minibatch})
+            #cost = tflib.run(cost, {lod_in: sched.lod, lrate_in: sched.D_lrate, minibatch_in: sched.minibatch})
 
-            #recon_loss = tflib.run([recon_loss], {lod_in: sched.lod, lrate_in: sched.D_lrate, minibatch_in: sched.minibatch})
-            #KL = tflib.run([KL], {lod_in: sched.lod, lrate_in: sched.D_lrate, minibatch_in: sched.minibatch})
+            recon_loss = tflib.run(recon_loss, {lod_in: sched.lod, lrate_in: sched.D_lrate, minibatch_in: sched.minibatch})
+            KL = tflib.run(KL, {lod_in: sched.lod, lrate_in: sched.D_lrate, minibatch_in: sched.minibatch})
 
             
-            # the line below returns shape 1, 4, 3, 1024, 1024 when put single arg in []
             reals_array = tflib.run(reals, {lod_in: sched.lod, lrate_in: sched.D_lrate, minibatch_in: sched.minibatch})
             fakes_array = tflib.run(fake_images, {lod_in: sched.lod, lrate_in: sched.D_lrate, minibatch_in: sched.minibatch})
 
+
+            reals_ = tflib.convert_images_to_uint8(reals_array, nchw_to_nhwc=True) 
+            fakes_ = tflib.convert_images_to_uint8(fakes_array, nchw_to_nhwc=True) 
+            fake_images = fakes_.eval()
+            real_images = reals_.eval()
+
+            embed()
   
-            embed()
-            #if cur_nimg % 1000 == 0:
-                #print(recon_loss, KL, cost)
-
-
-            
-            #real = Image.open('/mnt/nfs/scratch1/sbrockman/data/00009.png')
-            #real = np.array(real)
-
-            #z = E_snap.run(real, np.zeros(1))
-          
-
-            
-            #dataset.parse_tfrecord_np(reals_array[0][0])
-            #print(type(reals_array[0][0]))
-
-            embed()
-
-
-
-
+            #if cur_nimg % 10 == 0:
+                #print('made it through 10 images')
 
 
             cur_nimg += sched.minibatch
@@ -347,6 +337,7 @@ def training_loop(
                 autosummary('Resources/peak_gpu_mem_gb', peak_gpu_mem_op.eval() / 2**30)))
             autosummary('Timing/total_hours', total_time / (60.0 * 60.0))
             autosummary('Timing/total_days', total_time / (24.0 * 60.0 * 60.0))
+            print('recon loss: ', recon_loss, ' KL: ', KL)
 
             # Save snapshots.
             if cur_tick % image_snapshot_ticks == 0 or done:

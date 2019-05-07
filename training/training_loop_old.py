@@ -19,8 +19,9 @@ import train
 from training import dataset
 from training import misc
 from metrics import metric_base
-import pickle
 from IPython import embed
+import pickle
+
 
 #----------------------------------------------------------------------------
 # Just-in-time processing of training images before feeding them to the networks.
@@ -105,6 +106,7 @@ def training_schedule(
         s.D_lrate *= rampup
 
     # Other parameters.
+    #s.tick_kimg = tick_kimg_dict.get(s.resolution, tick_kimg_base)
     s.tick_kimg = tick_kimg_dict.get(s.resolution, tick_kimg_base)
     return s
 
@@ -112,10 +114,11 @@ def training_schedule(
 # Main training script.
 
 def training_loop(
+
     submit_config,
     G_args                  = {},       # Options for generator network.
     D_args                  = {},       # Options for discriminator network.
-    E_args                  = {},       # Options for encoder network.
+    E_args                  = {},       # Options for discriminator network.
 
     G_opt_args              = {},       # Options for generator optimizer.
     D_opt_args              = {},       # Options for discriminator optimizer.
@@ -146,6 +149,7 @@ def training_loop(
     resume_kimg             = 0.0,      # Assumed training progress at the beginning. Affects reporting and training schedule.
     resume_time             = 0.0):     # Assumed wallclock time at the beginning. Affects reporting.
 
+
     # Initialize dnnlib and TensorFlow.
     ctx = dnnlib.RunContext(submit_config, train)
     tflib.init_tf(tf_config)
@@ -159,14 +163,25 @@ def training_loop(
             network_pkl = misc.locate_network_pkl(resume_run_id, resume_snapshot)
             print('Loading networks from "%s"...' % network_pkl)
             G, D, Gs, E = misc.load_pkl(network_pkl)
+
         else:
             print('Constructing networks...')
             G = tflib.Network('G', num_channels=training_set.shape[0], resolution=training_set.shape[1], label_size=training_set.label_size, **G_args)
             D = tflib.Network('D', num_channels=training_set.shape[0], resolution=training_set.shape[1], label_size=training_set.label_size, **D_args)
             E = tflib.Network('E', num_channels=training_set.shape[0], resolution=training_set.shape[1], label_size=training_set.label_size, **E_args)
 
+
+            #exit()
+
             Gs = G.clone('Gs')
     G.print_layers(); E.print_layers()
+
+
+    # Load the pretrained network:  karras2019stylegan-ffhq-1024x1024.pkl
+    #url = 'https://drive.google.com/uc?export=download&id=1XfM3_jfHd9jrfHcPG0Z1iSAZPjVKe50e' 
+    #with dnnlib.util.open_url(url, cache_dir=config.cache_dir) as f:
+        #_G_pre, _D_pre, Gs_pre = pickle.load(f)
+
 
     print('Building TensorFlow graph...')
     with tf.name_scope('Inputs'), tf.device('/cpu:0'):
@@ -185,12 +200,9 @@ def training_loop(
             #D_gpu = D if gpu == 0 else D.clone(D.name + '_shadow')
             E_gpu = E if gpu == 0 else E.clone(E.name + '_shadow')
 
-
-            lod_assign_ops = [tf.assign(G_gpu.find_var('lod'), lod_in), tf.assign(E_gpu.find_var('lod'), lod_in)]
+            lod_assign_ops = [tf.assign(E_gpu.find_var('lod'), lod_in), tf.assign(G_gpu.find_var('lod'), lod_in)]
             reals, labels = training_set.get_minibatch_tf()
             reals = process_reals(reals, lod_in, mirror_augment, training_set.dynamic_range, drange_net)
-
-
             with tf.name_scope('E_loss'), tf.control_dependencies(lod_assign_ops):
                 G_loss = dnnlib.util.call_func_by_name(E=E_gpu, Gs_pre=G_gpu, opt=G_opt, training_set=training_set, minibatch_size=minibatch_split, reals=reals, labels=labels, **E_loss_args)
             #with tf.name_scope('D_loss'), tf.control_dependencies(lod_assign_ops):
@@ -199,14 +211,14 @@ def training_loop(
                 E_loss = dnnlib.util.call_func_by_name(E=E_gpu, Gs_pre=G_gpu, opt=E_opt, training_set=training_set, minibatch_size=minibatch_split, reals=reals, labels=labels, **E_loss_args)
 
 
-            G_opt.register_gradients(tf.reduce_mean(G_loss), G_gpu.trainables)
+            G_opt.register_gradients(tf.reduce_mean(G_loss), G_gpu.trainables) 
             #D_opt.register_gradients(tf.reduce_mean(D_loss), D_gpu.trainables)
             E_opt.register_gradients(tf.reduce_mean(E_loss), E_gpu.trainables)
     G_train_op = G_opt.apply_updates()
     #D_train_op = D_opt.apply_updates()
     E_train_op = E_opt.apply_updates()
 
-    Gs_update_op = Gs.setup_as_moving_average_of(G, beta=Gs_beta)
+    #Gs_update_op = Gs.setup_as_moving_average_of(G, beta=Gs_beta)
     with tf.device('/gpu:0'):
         try:
             peak_gpu_mem_op = tf.contrib.memory_stats.MaxBytesInUse()
@@ -237,7 +249,6 @@ def training_loop(
     prev_lod = -1.0
 
 
-
     while cur_nimg < total_kimg * 1000:
         if ctx.should_stop(): break
 
@@ -246,21 +257,40 @@ def training_loop(
         training_set.configure(sched.minibatch // submit_config.num_gpus, sched.lod)
         if reset_opt_for_new_lod:
             if np.floor(sched.lod) != np.floor(prev_lod) or np.ceil(sched.lod) != np.ceil(prev_lod):
-                G_opt.reset_optimizer_state(); E_opt.reset_optimizer_state()
+                E_opt.reset_optimizer_state(); G_opt.reset_optimizer_state();
         prev_lod = sched.lod
 
         # Run training ops.
         for _mb_repeat in range(minibatch_repeats):
 
+            tflib.run([E_train_op], {lod_in: sched.lod, lrate_in: sched.D_lrate, minibatch_in: sched.minibatch})
+            tflib.run([G_train_op], {lod_in: sched.lod, lrate_in: sched.D_lrate, minibatch_in: sched.minibatch})
+  
 
-            tflib.run([E_train_op], {lod_in: sched.lod, lrate_in: sched.G_lrate, minibatch_in: sched.minibatch})
-            tflib.run([G_train_op], {lod_in: sched.lod, lrate_in: sched.G_lrate, minibatch_in: sched.minibatch})
+            #reals, labels = tflib.run([reals, labels], {lod_in: sched.lod, lrate_in: sched.D_lrate, minibatch_in: sched.minibatch})
+
             
+            #mu, log_var = E.get_output_for(reals, labels, is_training=False)
+            #eps = tf.random.normal(tf.shape(mu), 0, 1, dtype=tf.float32)
+            #z = tf.add(mu, tf.multiply(tf.sqrt(tf.exp(log_var)), eps))
+            
+            #fake_images = Gs_pre.get_output_for(z, labels, is_training=False)
+            #recon_loss = tf.losses.mean_squared_error(reals, fake_images)
+            
+            #KL = -0.5 * tf.reduce_sum(1+log_var - tf.square(mu) - tf.exp(log_var))
+            #cost = tf.reduce_mean(recon_loss + KL)
+            
+            
+            #cost = tflib.run(cost, {lod_in: sched.lod, lrate_in: sched.D_lrate, minibatch_in: sched.minibatch})
+            
+            #recon_loss = tflib.run(recon_loss, {lod_in: sched.lod, lrate_in: sched.D_lrate, minibatch_in: sched.minibatch})
+            #KL = tflib.run(KL, {lod_in: sched.lod, lrate_in: sched.D_lrate, minibatch_in: sched.minibatch})
+            
+            #if cur_nimg % 1000 == 0:
+                #print('reached 1000 images')
 
 
-
-            cur_nimg += sched.minibatch 
-
+            cur_nimg += sched.minibatch
 
         # Perform maintenance tasks once per tick.
         done = (cur_nimg >= total_kimg * 1000)
@@ -287,22 +317,22 @@ def training_loop(
 
 
             mu, log_var = E.get_output_for(reals, labels, is_training=False)
+            eps = tf.random.normal(tf.shape(mu), 0, 1, dtype=tf.float32)
+            z = tf.add(mu, tf.multiply(tf.sqrt(tf.exp(log_var)), eps))
+            
             fake_images = G.get_output_for(mu, labels, is_training=False)
             recon_loss = tf.losses.mean_squared_error(reals, fake_images)
             
+            KL = -0.5 * tf.reduce_sum(1+log_var - tf.square(mu) - tf.exp(log_var))
+            #cost = tf.reduce_mean(recon_loss + KL)
+
             
-            KL = -0.5 * tf.reduce_sum(1+log_var - tf.square(mu) - tf.exp(log_var), axis=1)
-            KL = tf.reduce_mean(KL)
-  
-
-            recon_loss = tflib.run(recon_loss, {lod_in: sched.lod, lrate_in: sched.G_lrate, minibatch_in: sched.minibatch})
-            KL = tflib.run(KL, {lod_in: sched.lod, lrate_in: sched.G_lrate, minibatch_in: sched.minibatch})
-            print('recon_loss: ', recon_loss, ' KL: ', KL)
-
-
-            if np.isnan(recon_loss).any() or np.isnan(KL).any():
-                embed()
-
+            
+            #cost = tflib.run(cost, {lod_in: sched.lod, lrate_in: sched.D_lrate, minibatch_in: sched.minibatch})
+            
+            recon_loss = tflib.run(recon_loss, {lod_in: sched.lod, lrate_in: sched.D_lrate, minibatch_in: sched.minibatch})
+            KL = tflib.run(KL, {lod_in: sched.lod, lrate_in: sched.D_lrate, minibatch_in: sched.minibatch})
+            print('recon loss: ', recon_loss, ' KL: ', KL)
 
 
             # Save snapshots.
@@ -320,6 +350,15 @@ def training_loop(
             ctx.update('%.2f' % sched.lod, cur_epoch=cur_nimg // 1000, max_epoch=total_kimg)
             maintenance_time = ctx.get_last_update_interval() - tick_time
 
+
+
+        #print('reached ipython embed')
+        #embed()
+
     # Write final results.
-    misc.save_pkl((G, D, Gs, E), os.path.join(submit_config.run_dir, 'network-final.pkl'))
-        #----------------------------------------------------------------------------
+    misc.save_pkl((G, D, Gs), os.path.join(submit_config.run_dir, 'network-final.pkl'))
+    summary_log.close()
+
+    ctx.close()
+
+#----------------------------------------------------------------------------
